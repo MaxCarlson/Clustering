@@ -20,7 +20,7 @@ device = torch.device(dev)
 
 def addNoise(x):
     _, row, col = x.shape
-    number_of_pixels = int(28*28/10)
+    number_of_pixels = int(28*28/6)
     for i in range(number_of_pixels):
        
         # Pick a random y coordinate
@@ -88,20 +88,20 @@ class NoisyDataset(torch.utils.data.Dataset):
 
 batchSize = 128
 subsetSize = imagesPerCatagory*10
-subset = torch.utils.data.Subset(trainset, indicies)
-nsubset = torch.utils.data.Subset(noisyTrainset, indicies)
+trainsubset = torch.utils.data.Subset(trainset, indicies)
+trainNoisySubset = torch.utils.data.Subset(noisyTrainset, indicies)
 
 
-trainloader = torch.utils.data.DataLoader(subset, batch_size=batchSize, shuffle=True, num_workers=2)
+trainloader = torch.utils.data.DataLoader(trainsubset, batch_size=batchSize, shuffle=True, num_workers=2)
 testloader = torch.utils.data.DataLoader(testset, batch_size=batchSize, shuffle=True, num_workers=2)
 
-noisyTrainSet = NoisyDataset(noisyTrainset, trainset)
+noisyTrainSet = NoisyDataset(trainNoisySubset, trainsubset)
 noisyTestSet = NoisyDataset(noisyTestset, testset)
 noisyTrainloader = torch.utils.data.DataLoader(noisyTrainSet, batch_size=batchSize, shuffle=True, num_workers=2)
 noisyTestloader = torch.utils.data.DataLoader(noisyTestSet, batch_size=batchSize, shuffle=True, num_workers=2)
 
 
-kmeansloader = torch.utils.data.DataLoader(subset, batch_size=subsetSize)
+kmeansloader = torch.utils.data.DataLoader(trainsubset, batch_size=subsetSize)
 
 class Autoencoder(nn.Module):
     def __init__(self):
@@ -202,14 +202,14 @@ def trainNoisyAE(model, num_epochs, trainloader, testloader, learning_rate=1e-3)
                                     weight_decay=1e-5) # <--
     outputs = []
     for epoch in range(num_epochs):
+        if epoch % 5 == 0 and epoch != 0:
+            fig, axs = plt.subplots(1, 3)
+            axs[0].imshow(oimg[0][0])
+            axs[1].imshow(img[0][0])
+            axs[2].imshow(recon.detach().numpy()[0][0])
+            plt.show()
         for (img, _), (oimg, _) in trainloader:
             recon = model(img)
-
-            fig, (ax1, ax2) = plt.subplots(1, 2)
-            ax1.imshow(img[0][0])
-            ax2.imshow(oimg[0][0])
-            plt.show()
-
             loss = criterion(recon, oimg)
             loss.backward()
             optimizer.step()
@@ -220,6 +220,19 @@ def trainNoisyAE(model, num_epochs, trainloader, testloader, learning_rate=1e-3)
             tloss = criterion(recon, oimg)
 
         print('Epoch:{}, Traing Loss:{:.4f}, Test Loss:{:.4f}'.format(epoch+1, float(loss), float(tloss)))
+
+    fig, axs = plt.subplots(3, 10)
+    for (img, _), (oimg, _) in testloader:
+        recon = model(img).detach().numpy()
+        for i in range(10):
+            axs[0][i].imshow(oimg[i][0])
+            axs[1][i].imshow(img[i][0])
+            axs[2][i].imshow(recon[i][0])
+            axs[0][i].axis('off')
+            axs[1][i].axis('off')
+            axs[2][i].axis('off')
+
+        plt.show()
 
 def noisyAutoencoder():
     max_epochs = 20
