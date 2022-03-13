@@ -20,7 +20,7 @@ device = torch.device(dev)
 
 def addNoise(x):
     _, row, col = x.shape
-    number_of_pixels = int(28*28/6)
+    number_of_pixels = int(28*28/12)
     for i in range(number_of_pixels):
        
         # Pick a random y coordinate
@@ -202,28 +202,43 @@ def trainNoisyAE(model, num_epochs, trainloader, testloader, learning_rate=1e-3)
                                     weight_decay=1e-5) # <--
     outputs = []
     for epoch in range(num_epochs):
-        if epoch % 5 == 0 and epoch != 0:
-            fig, axs = plt.subplots(1, 3)
-            axs[0].imshow(oimg[0][0])
-            axs[1].imshow(img[0][0])
-            axs[2].imshow(recon.detach().numpy()[0][0])
-            plt.show()
+        #if epoch % 5 == 0 and epoch != 0:
+        #    fig, axs = plt.subplots(1, 3)
+        #    axs[0].imshow(oimg[0][0])
+        #    axs[1].imshow(img[0][0])
+        #    axs[2].imshow(recon.detach().numpy()[0][0])
+        #    plt.show()
         for (img, _), (oimg, _) in trainloader:
+            if dev == 'cuda:0':
+                img = img.to(device)
+                oimg = oimg.to(device)
+
             recon = model(img)
             loss = criterion(recon, oimg)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
-        for (img, _), (oimg, _) in testloader:
-            recon = model(img)
-            tloss = criterion(recon, oimg)
+        #for (img, _), (oimg, _) in testloader:
+        #    recon = model(img)
+        #    tloss = criterion(recon, oimg)
 
-        print('Epoch:{}, Traing Loss:{:.4f}, Test Loss:{:.4f}'.format(epoch+1, float(loss), float(tloss)))
+        #print('Epoch:{}, Traing Loss:{:.4f}, Test Loss:{:.4f}'.format(epoch+1, float(loss), float(tloss)))
+        print('Epoch:{}, Traing Loss:{:.4f}'.format(epoch+1, float(loss)))
+
 
     fig, axs = plt.subplots(3, 10)
     for (img, _), (oimg, _) in testloader:
-        recon = model(img).detach().numpy()
+        if dev == 'cuda:0':
+            img = img.to(device)
+
+        recon = model(img)
+
+        if dev == 'cuda:0':
+            recon = recon.cpu()
+            img = img.cpu()
+        recon = recon.detach().numpy()
+
         for i in range(10):
             axs[0][i].imshow(oimg[i][0])
             axs[1][i].imshow(img[i][0])
@@ -235,8 +250,9 @@ def trainNoisyAE(model, num_epochs, trainloader, testloader, learning_rate=1e-3)
         plt.show()
 
 def noisyAutoencoder():
-    max_epochs = 20
+    max_epochs = 1
     model = Autoencoder()
+    model = model.to(device)
     trainNoisyAE(model, max_epochs, noisyTrainloader, noisyTestloader)
 
 if __name__ == '__main__':
