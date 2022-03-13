@@ -1,15 +1,16 @@
 import torch
+import random
 import numpy as np
 import torchvision
 from torch import nn
 import seaborn as sns; sns.set()
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 from torchvision import datasets, models
 import torchvision.transforms as transforms
 from sklearn.metrics import confusion_matrix
 from scipy.optimize import linear_sum_assignment
-
 if torch.cuda.is_available():  
     dev = "cuda:0" 
 else:  
@@ -17,12 +18,43 @@ else:
 #device = torch.device('cpu')
 device = torch.device(dev) 
 
+def addNoise(x):
+    _, row, col = x.shape
+    number_of_pixels = int(28*28/10)
+    for i in range(number_of_pixels):
+       
+        # Pick a random y coordinate
+        y_coord=random.randint(0, row - 1)
+         
+        # Pick a random x coordinate
+        x_coord=random.randint(0, col - 1)
+         
+        # Color that pixel to white
+        x[0][y_coord][x_coord] = 1
+
+    for i in range(number_of_pixels):
+       
+        # Pick a random y coordinate
+        y_coord=random.randint(0, row - 1)
+         
+        # Pick a random x coordinate
+        x_coord=random.randint(0, col - 1)
+         
+        # Color that pixel to black
+        x[0][y_coord][x_coord] = 0
+    return x
+
 transform = transforms.Compose([transforms.ToTensor()])
+noisyTransform = transforms.Compose([transforms.ToTensor(),
+                                     transforms.Lambda(addNoise)])
 
 batchSize = 128
 
 trainset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 testset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+
+noisyTrainset = datasets.MNIST(root='./data', train=True, download=True, transform=noisyTransform)
+noisyTestset = datasets.MNIST(root='./data', train=False, download=True, transform=noisyTransform)
 
 indicies = []
 imagesPerCatagory = 1000
@@ -41,11 +73,33 @@ for i in range(len(trainset)):
     if filledCatagories == 10:
         break
 
+class NoisyDataset(torch.utils.data.Dataset):
+    def __init__(self, datasetA, datasetB):
+        self.datasetA = datasetA
+        self.datasetB = datasetB
+        
+    def __getitem__(self, index):
+        xA = self.datasetA[index]
+        xB = self.datasetB[index]
+        return xA, xB
+    
+    def __len__(self):
+        return len(self.datasetA)
+
 batchSize = 128
 subsetSize = imagesPerCatagory*10
 subset = torch.utils.data.Subset(trainset, indicies)
+nsubset = torch.utils.data.Subset(noisyTrainset, indicies)
+
+
 trainloader = torch.utils.data.DataLoader(subset, batch_size=batchSize, shuffle=True, num_workers=2)
 testloader = torch.utils.data.DataLoader(testset, batch_size=batchSize, shuffle=True, num_workers=2)
+
+noisyTrainSet = NoisyDataset(noisyTrainset, trainset)
+noisyTestSet = NoisyDataset(noisyTestset, testset)
+noisyTrainloader = torch.utils.data.DataLoader(noisyTrainSet, batch_size=batchSize, shuffle=True, num_workers=2)
+noisyTestloader = torch.utils.data.DataLoader(noisyTestSet, batch_size=batchSize, shuffle=True, num_workers=2)
+
 
 kmeansloader = torch.utils.data.DataLoader(subset, batch_size=subsetSize)
 
@@ -97,48 +151,86 @@ def kmeans(x, y, reshapeSize):
     accuracy = np.trace(cm2) / np.sum(cm2)
     print(f'Accuracy = {accuracy}')
 
-def kmeansfvectors():
-    def train(model, num_epochs=5, learning_rate=1e-3):
-        torch.manual_seed(42)
-        criterion = nn.MSELoss() # mean square error loss
-        optimizer = torch.optim.Adam(model.parameters(),
-                                     lr=learning_rate, 
-                                     weight_decay=1e-5) # <--
-        outputs = []
-        for epoch in range(num_epochs):
-            for data in trainloader:
-                img, _ = data
-                recon = model(img)
-                loss = criterion(recon, img)
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
+def trainAE(model, num_epochs, trainloader, testloader, learning_rate=1e-3,):
+    torch.manual_seed(42)
+    criterion = nn.MSELoss() # mean square error loss
+    optimizer = torch.optim.Adam(model.parameters(),
+                                    lr=learning_rate, 
+                                    weight_decay=1e-5) # <--
+    outputs = []
+    for epoch in range(num_epochs):
+        for img, _ in trainloader:
+            recon = model(img)
+            loss = criterion(recon, img)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
 
-            for data in testloader:
-                img, _ = data
-                recon = model(img)
-                tloss = criterion(recon, img)
+        for img, _ in testloader:
+            recon = model(img)
+            tloss = criterion(recon, img)
 
-            print('Epoch:{}, Traing Loss:{:.4f}, Test Loss:{:.4f}'.format(epoch+1, float(loss), float(tloss)))
+        print('Epoch:{}, Traing Loss:{:.4f}, Test Loss:{:.4f}'.format(epoch+1, float(loss), float(tloss)))
 
-    model = Autoencoder()
+
+def kmeansfvectors(doPca = False):
     max_epochs = 20
-    train(model, num_epochs=max_epochs)
+    model = Autoencoder()
+    trainAE(model, max_epochs, trainloader, testloader)
 
     x = next(iter(kmeansloader))
     x, y = x[0].numpy(), x[1].numpy()
     #x = np.reshape(x, (subsetSize, 28*28))
     x = torch.tensor(x)
-    out = model.encode(x)
+    out = model.encode(x).detach().numpy()
     #print(out)
 
-    kmeans(out.detach().numpy(), y, 64)
+    outSize = 64
 
-    a=5
+    if doPca:
+        pcCount = 4
+        out = PCA(n_components=pcCount).fit_transform(np.reshape(out, (out.shape[0], outSize)))
+        outSize = pcCount
+
+    kmeans(out, y, outSize)
+
+def trainNoisyAE(model, num_epochs, trainloader, testloader, learning_rate=1e-3):
+    torch.manual_seed(42)
+    criterion = nn.MSELoss() # mean square error loss
+    optimizer = torch.optim.Adam(model.parameters(),
+                                    lr=learning_rate, 
+                                    weight_decay=1e-5) # <--
+    outputs = []
+    for epoch in range(num_epochs):
+        for (img, _), (oimg, _) in trainloader:
+            recon = model(img)
+
+            fig, (ax1, ax2) = plt.subplots(1, 2)
+            ax1.imshow(img[0][0])
+            ax2.imshow(oimg[0][0])
+            plt.show()
+
+            loss = criterion(recon, oimg)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        for (img, _), (oimg, _) in testloader:
+            recon = model(img)
+            tloss = criterion(recon, oimg)
+
+        print('Epoch:{}, Traing Loss:{:.4f}, Test Loss:{:.4f}'.format(epoch+1, float(loss), float(tloss)))
+
+def noisyAutoencoder():
+    max_epochs = 20
+    model = Autoencoder()
+    trainNoisyAE(model, max_epochs, noisyTrainloader, noisyTestloader)
 
 if __name__ == '__main__':
     #x = next(iter(kmeansloader))
     #x, y = x[0].numpy(), x[1].numpy()
     #kmeans(x, y, 28*28)
-    kmeansfvectors()
+    #kmeansfvectors(doPca=False)
+    #kmeansfvectors(doPca=True)
+    noisyAutoencoder()
 
