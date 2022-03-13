@@ -22,6 +22,7 @@ transform = transforms.Compose([transforms.ToTensor()])
 batchSize = 128
 
 trainset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+testset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 
 indicies = []
 imagesPerCatagory = 1000
@@ -44,7 +45,9 @@ batchSize = 128
 subsetSize = imagesPerCatagory*10
 subset = torch.utils.data.Subset(trainset, indicies)
 trainloader = torch.utils.data.DataLoader(subset, batch_size=batchSize, shuffle=True, num_workers=2)
-kmeansloader = torch.utils.data.DataLoader(subset, batch_size=len(trainset))
+testloader = torch.utils.data.DataLoader(testset, batch_size=batchSize, shuffle=True, num_workers=2)
+
+kmeansloader = torch.utils.data.DataLoader(subset, batch_size=subsetSize)
 
 class Autoencoder(nn.Module):
     def __init__(self):
@@ -111,9 +114,12 @@ def kmeansfvectors():
                 optimizer.step()
                 optimizer.zero_grad()
 
-            print('Epoch:{}, Loss:{:.4f}'.format(epoch+1, float(loss)))
-            outputs.append((epoch, img, recon),)
-        return outputs
+            for data in testloader:
+                img, _ = data
+                recon = model(img)
+                tloss = criterion(recon, img)
+
+            print('Epoch:{}, Traing Loss:{:.4f}, Test Loss:{:.4f}'.format(epoch+1, float(loss), float(tloss)))
 
     model = Autoencoder()
     max_epochs = 20
